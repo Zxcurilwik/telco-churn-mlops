@@ -1,0 +1,17 @@
+# Render Blueprint. Dashboard → New → Blueprint → pick this repository.
+# Render builds the same Dockerfile (the model is trained during the build).
+services:
+  - type: web
+    name: telco-churn-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    # Deploys are triggered by GitHub Actions (deploy hook) only after CI passes.
+    autoDeploy: false
+    envVars:
+      - key: LOG_LEVEL
+        value: INFO
+      - key: WEB_CONCURRENCY
+        value: "1"

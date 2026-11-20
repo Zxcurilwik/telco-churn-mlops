@@ -1,0 +1,7 @@
+# Local development & CI: tests and linters.
+-r requirements-train.txt
+pytest==9.2.0
+pytest-cov==7.1.0
+httpx==0.28.1
+ruff==0.17.6
+huggingface-hub==2.4.0

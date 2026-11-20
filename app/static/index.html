@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Churn Predictor</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --text: #1c2230; --muted: #667085; --line: #e3e6eb;
+      --accent: #2f5fd0; --low: #1f9d55; --medium: #c98a06; --high: #d64545; --track: #edf0f4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #11141a; --card: #191d25; --text: #e7eaf0; --muted: #9aa3b2; --line: #2a303b;
+        --accent: #6e95ff; --low: #3fbf7a; --medium: #e0a72e; --high: #f06b6b; --track: #252b35;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 48px; }
+    header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -0.01em; }
+    header p { margin: 0; color: var(--muted); }
+    header nav { margin-top: 10px; display: flex; gap: 16px; flex-wrap: wrap; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; margin-top: 24px; align-items: start; }
+    @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+    fieldset { border: 0; margin: 0 0 18px; padding: 0; }
+    legend { font-weight: 600; margin-bottom: 10px; font-size: 13px; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+    select, input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+      border-radius: 8px; padding: 7px 9px; width: 100%; }
+    select:disabled { opacity: .55; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    button { font: inherit; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line);
+      background: var(--card); color: var(--text); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .result { position: sticky; top: 16px; }
+    .prob { font-size: 52px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .bar { position: relative; height: 10px; border-radius: 5px; background: var(--track); margin: 18px 0 6px; }
+    .bar > .fill { height: 100%; border-radius: 5px; width: 0; transition: width .35s ease, background .35s; }
+    .bar > .mark { position: absolute; top: -5px; width: 2px; height: 20px; background: var(--text); opacity: .7; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; color: #fff; }
+    .error { color: var(--high); font-size: 14px; white-space: pre-wrap; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 16px 0 0; font-size: 13px; }
+    dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Telco customer churn predictor</h1>
+    <p>Estimates how likely a customer is to leave. Model trained on the IBM Telco Customer Churn dataset.</p>
+    <nav><a href="/docs">API docs (Swagger)</a><a href="/model/info">Model metadata</a><a href="/health">Health</a></nav>
+  </header>
+
+  <div class="layout">
+    <form id="form" class="card">
+      <fieldset><legend>Customer</legend><div class="grid" data-group="profile"></div></fieldset>
+      <fieldset><legend>Services</legend><div class="grid" data-group="services"></div></fieldset>
+      <fieldset><legend>Billing</legend><div class="grid" data-group="billing"></div></fieldset>
+      <div class="actions">
+        <button class="primary" type="submit">Predict</button>
+        <button type="button" data-preset="risky">Example: at-risk</button>
+        <button type="button" data-preset="loyal">Example: loyal</button>
+      </div>
+    </form>
+
+    <aside class="card result" aria-live="polite">
+      <div class="muted">Churn probability</div>
+      <div class="prob" id="prob">—</div>
+      <div id="verdict" class="muted">Fill in the form and press Predict.</div>
+      <div class="bar"><div class="fill" id="fill"></div><div class="mark" id="mark" hidden></div></div>
+      <div class="muted" id="thresholdNote"></div>
+      <div class="error" id="error"></div>
+      <dl id="modelInfo"></dl>
+    </aside>
+  </div>
+</main>
+
+<script>
+const YN = ["No", "Yes"];
+const ADDON = ["No", "Yes", "No internet service"];
+const FIELDS = [
+  ["profile", "gender", "Gender", ["Female", "Male"]],
+  ["profile", "SeniorCitizen", "Senior citizen", [["0", "No"], ["1", "Yes"]]],
+  ["profile", "Partner", "Partner", YN],
+  ["profile", "Dependents", "Dependents", YN],
+  ["profile", "tenure", "Tenure, months", "int"],
+  ["services", "PhoneService", "Phone service", YN],
+  ["services", "MultipleLines", "Multiple lines", ["No", "Yes", "No phone service"]],
+  ["services", "InternetService", "Internet", ["DSL", "Fiber optic", "No"]],
+  ["services", "OnlineSecurity", "Online security", ADDON],
+  ["services", "OnlineBackup", "Online backup", ADDON],
+  ["services", "DeviceProtection", "Device protection", ADDON],
+  ["services", "TechSupport", "Tech support", ADDON],
+  ["services", "StreamingTV", "Streaming TV", ADDON],
+  ["services", "StreamingMovies", "Streaming movies", ADDON],
+  ["billing", "Contract", "Contract", ["Month-to-month", "One year", "Two year"]],
+  ["billing", "PaperlessBilling", "Paperless billing", YN],
+  ["billing", "PaymentMethod", "Payment method",
+    ["Electronic check", "Mailed check", "Bank transfer (automatic)", "Credit card (automatic)"]],
+  ["billing", "MonthlyCharges", "Monthly charges, $", "float"],
+  ["billing", "TotalCharges", "Total charges, $", "float"],
+];
+const ADDONS = ["OnlineSecurity", "OnlineBackup", "DeviceProtection", "TechSupport", "StreamingTV", "StreamingMovies"];
+const PRESETS = {
+  risky: { gender: "Female", SeniorCitizen: "1", Partner: "No", Dependents: "No", tenure: 2,
+    PhoneService: "Yes", MultipleLines: "No", InternetService: "Fiber optic", OnlineSecurity: "No",
+    OnlineBackup: "No", DeviceProtection: "No", TechSupport: "No", StreamingTV: "Yes", StreamingMovies: "No",
+    Contract: "Month-to-month", PaperlessBilling: "Yes", PaymentMethod: "Electronic check",
+    MonthlyCharges: 89.1, TotalCharges: 178.2 },
+  loyal: { gender: "Male", SeniorCitizen: "0", Partner: "Yes", Dependents: "Yes", tenure: 60,
+    PhoneService: "Yes", MultipleLines: "Yes", InternetService: "DSL", OnlineSecurity: "Yes",
+    OnlineBackup: "Yes", DeviceProtection: "Yes", TechSupport: "Yes", StreamingTV: "No", StreamingMovies: "No",
+    Contract: "Two year", PaperlessBilling: "No", PaymentMethod: "Credit card (automatic)",
+    MonthlyCharges: 74.5, TotalCharges: 4470.0 },
+};
+const COLORS = { low: "var(--low)", medium: "var(--medium)", high: "var(--high)" };
+const form = document.getElementById("form");
+const $ = (id) => document.getElementById(id);
+
+for (const [group, name, label, kind] of FIELDS) {
+  const wrap = document.createElement("label");
+  wrap.textContent = label;
+  let input;
+  if (Array.isArray(kind)) {
+    input = document.createElement("select");
+    for (const opt of kind) {
+      const [value, text] = Array.isArray(opt) ? opt : [opt, opt];
+      input.add(new Option(text, value));
+    }
+  } else {
+    input = document.createElement("input");
+    input.type = "number"; input.min = "0"; input.required = true;
+    input.step = kind === "int" ? "1" : "0.01";
+  }
+  input.name = name;
+  wrap.appendChild(input);
+  form.querySelector(`[data-group="${group}"]`).appendChild(wrap);
+}
+
+// Keep dependent fields consistent, mirroring the API's validation rules.
+function syncDependents() {
+  const phone = form.PhoneService.value === "Yes";
+  form.MultipleLines.disabled = !phone;
+  if (!phone) form.MultipleLines.value = "No phone service";
+  else if (form.MultipleLines.value === "No phone service") form.MultipleLines.value = "No";
+  const internet = form.InternetService.value !== "No";
+  for (const name of ADDONS) {
+    form[name].disabled = !internet;
+    if (!internet) form[name].value = "No internet service";
+    else if (form[name].value === "No internet service") form[name].value = "No";
+  }
+}
+form.PhoneService.addEventListener("change", syncDependents);
+form.InternetService.addEventListener("change", syncDependents);
+
+function applyPreset(preset) {
+  for (const [key, value] of Object.entries(preset)) form[key].value = value;
+  syncDependents();
+}
+
+function payload() {
+  const body = {};
+  for (const [, name, , kind] of FIELDS) {
+    const raw = form[name].value;
+    body[name] = kind === "int" || name === "SeniorCitizen" ? parseInt(raw, 10)
+               : kind === "float" ? parseFloat(raw) : raw;
+  }
+  return body;
+}
+
+function formatError(detail) {
+  if (!Array.isArray(detail)) return String(detail);
+  return detail.map((e) => `${(e.loc || []).slice(1).join(".") || "input"}: ${e.msg}`).join("\n");
+}
+
+async function predict(event) {
+  event?.preventDefault();
+  $("error").textContent = "";
+  try {
+    const res = await fetch("predict", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload()),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(formatError(data.detail));
+    const pct = Math.round(data.churn_probability * 1000) / 10;
+    $("prob").textContent = `${pct}%`;
+    $("prob").style.color = COLORS[data.risk_level];
+    $("fill").style.width = `${pct}%`;
+    $("fill").style.background = COLORS[data.risk_level];
+    $("mark").hidden = false;
+    $("mark").style.left = `calc(${data.threshold * 100}% - 1px)`;
+    $("verdict").innerHTML = "";
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.style.background = COLORS[data.risk_level];
+    badge.textContent = data.churn ? `Likely to churn · ${data.risk_level} risk` : `Likely to stay · ${data.risk_level} risk`;
+    $("verdict").appendChild(badge);
+    $("thresholdNote").textContent = `Marker = decision threshold ${data.threshold.toFixed(2)} (chosen to maximise F1 on cross-validation).`;
+  } catch (err) {
+    $("error").textContent = err.message;
+  }
+}
+
+async function loadModelInfo() {
+  try {
+    const m = await (await fetch("model/info")).json();
+    const rows = [
+      ["Model", m.estimator], ["Version", m.model_version],
+      ["Test ROC-AUC", m.metrics_test?.roc_auc], ["Test PR-AUC", m.metrics_test?.pr_auc],
+      ["Recall @ thr.", m.metrics_test?.recall], ["Trained", (m.trained_at || "").replace("T", " ").slice(0, 16)],
+    ];
+    for (const [k, v] of rows) {
+      const dt = document.createElement("dt"); dt.textContent = k;
+      const dd = document.createElement("dd"); dd.textContent = v ?? "—";
+      $("modelInfo").append(dt, dd);
+    }
+  } catch { /* metadata is optional for the demo */ }
+}
+
+form.addEventListener("submit", predict);
+document.querySelectorAll("[data-preset]").forEach((btn) =>
+  btn.addEventListener("click", () => { applyPreset(PRESETS[btn.dataset.preset]); predict(); }));
+applyPreset(PRESETS.risky);
+loadModelInfo();
+predict();
+</script>
+</body>
+</html>

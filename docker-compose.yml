@@ -1,0 +1,66 @@
+# Local "mini-platform": MLflow tracking server + one-off training job + API.
+#
+#   docker compose up --build        # MLflow UI: http://localhost:5000
+#                                    # API + demo: http://localhost:8000
+#
+# `train` logs experiments to the MLflow server and writes ./models;
+# `api` starts only after training succeeded and serves that fresh model.
+name: telco-churn
+
+x-trainer: &trainer
+  build:
+    context: .
+    target: trainer
+  image: telco-churn-trainer
+
+services:
+  mlflow:
+    <<: *trainer
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --allowed-hosts mlflow:5000,localhost:5000,127.0.0.1:5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  train:
+    <<: *trainer
+    command: python -m churn.train --config configs/train.yaml
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ./configs:/app/configs:ro   # edit the config, re-run, compare in MLflow
+      - ./data:/app/data            # dataset is downloaded once and cached here
+      - ./models:/app/models        # exported serving artifact
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: runtime
+    image: telco-churn-api
+    environment:
+      MODEL_DIR: /app/models
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:7860"
+    volumes:
+      - ./models:/app/models:ro
+    depends_on:
+      train:
+        condition: service_completed_successfully
+
+volumes:
+  mlflow-data:

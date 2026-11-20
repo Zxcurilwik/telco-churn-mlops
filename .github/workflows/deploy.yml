@@ -1,0 +1,100 @@
+name: Deploy
+
+# Runs only after CI succeeded on main, so a red build is never deployed.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  huggingface:
+    name: Hugging Face Spaces
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    environment:
+      name: huggingface
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_SPACE_ID: ${{ vars.HF_SPACE_ID }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE_ID" ]; then
+            echo "::notice::Set secret HF_TOKEN and variable HF_SPACE_ID to enable Hugging Face deploys"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.cfg.outputs.enabled == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-python@v7
+        if: steps.cfg.outputs.enabled == 'true'
+        with:
+          python-version: "3.12"
+      - name: Upload to Space and wait for the build
+        if: steps.cfg.outputs.enabled == 'true'
+        id: deploy
+        run: |
+          pip install huggingface-hub==2.4.0
+          python scripts/deploy_hf_space.py --wait
+      - name: Smoke test the live Space
+        if: steps.cfg.outputs.enabled == 'true'
+        run: python scripts/smoke_test.py "${{ steps.deploy.outputs.url }}" 300
+
+  render:
+    name: Render
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_APP_URL: ${{ vars.RENDER_APP_URL }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::notice::Set secret RENDER_DEPLOY_HOOK_URL to enable Render deploys"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v7
+        if: steps.cfg.outputs.enabled == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Trigger deploy and wait for the new model version
+        if: steps.cfg.outputs.enabled == 'true'
+        run: |
+          version() { curl -fsS -m 60 "$RENDER_APP_URL/health" | jq -r .model_version 2>/dev/null || true; }
+          OLD=""
+          if [ -n "$RENDER_APP_URL" ]; then OLD=$(version); echo "Current version: ${OLD:-none}"; fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL" > /dev/null
+          echo "Deploy triggered"
+          [ -z "$RENDER_APP_URL" ] && exit 0
+          # Each image build trains a fresh MLflow run, so model_version changes on deploy.
+          for _ in $(seq 1 80); do
+            sleep 15
+            NEW=$(version)
+            if [ -n "$NEW" ] && [ "$NEW" != "$OLD" ]; then echo "Live version: $NEW"; exit 0; fi
+          done
+          echo "::error::New version did not go live within 20 minutes"; exit 1
+      - name: Smoke test
+        if: steps.cfg.outputs.enabled == 'true' && env.RENDER_APP_URL != ''
+        run: python3 scripts/smoke_test.py "$RENDER_APP_URL" 120

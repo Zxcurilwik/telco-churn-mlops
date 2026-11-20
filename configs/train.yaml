@@ -1,0 +1,54 @@
+# Training configuration. Every value here is logged to MLflow with the run.
+experiment_name: telco-churn
+registered_model_name: telco-churn-classifier
+seed: 42
+
+data:
+  # IBM sample dataset "Telco Customer Churn" (7043 customers, 21 columns).
+  url: https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/master/data/Telco-Customer-Churn.csv
+  sha256: 16320c9c1ec72448db59aa0a26a0b95401046bef5d02fd3aeb906448e3055e91
+  path: data/raw/telco_churn.csv
+  test_size: 0.2
+
+cv_folds: 5
+# Candidate with the best mean CV value of this metric becomes the champion.
+selection_metric: pr_auc
+
+# A model below these hold-out test scores is rejected: training exits with
+# code 1 and nothing is exported. This guards CI and the Docker build.
+quality_gate:
+  min_roc_auc: 0.80
+  min_pr_auc: 0.60
+
+output_dir: models
+
+# Each entry expands into a grid; every grid point is a nested MLflow run.
+candidates:
+  logreg:
+    estimator: logistic_regression
+    params:
+      max_iter: [2000]
+      class_weight: [balanced]
+    grid:
+      C: [0.05, 0.3, 1.0]
+
+  random_forest:
+    estimator: random_forest
+    params:
+      n_estimators: [400]
+      class_weight: [balanced_subsample]
+      n_jobs: [-1]
+    grid:
+      max_depth: [6, 10]
+      min_samples_leaf: [5]
+
+  hist_gb:
+    estimator: hist_gradient_boosting
+    params:
+      max_iter: [250]
+      class_weight: [balanced]
+      early_stopping: [false]
+    grid:
+      learning_rate: [0.03, 0.08]
+      max_leaf_nodes: [8]
+      l2_regularization: [1.0]

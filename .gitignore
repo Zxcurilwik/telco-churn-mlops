@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Data & artifacts (reproduced by `make train`)
+data/raw/
+models/*
+!models/.gitkeep
+mlruns/
+mlartifacts/
+mlflow.db
+
+.env
+.DS_Store
+.idea/
+.vscode/

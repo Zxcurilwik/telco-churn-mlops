@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  MLFLOW_DISABLE_AGENT_HINT: "1"
+  GIT_PYTHON_REFRESH: quiet
+
+jobs:
+  lint-test:
+    name: Lint & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -e . --no-deps
+      - name: Ruff (lint + format)
+        run: |
+          ruff check . --output-format=github
+          ruff format --check .
+      - name: Pytest (offline, synthetic data)
+        run: pytest --cov --cov-report=term-missing
+
+  train:
+    name: Train on real data + quality gate
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements-train.txt
+          pip install -e . --no-deps
+      - name: Train (fails if the quality gate is not met)
+        run: python -m churn.train --config configs/train.yaml
+      - name: Report metrics
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          m = json.load(open("models/metadata.json"))
+          print(f"### Champion: `{m['candidate']}`\n")
+          print(f"Decision threshold: **{m['threshold']:.3f}** · MLflow run `{m['mlflow_run_id']}`\n")
+          print("| metric (hold-out test) | value |\n|---|---|")
+          for k, v in m["metrics_test"].items():
+              print(f"| {k} | {v:.4f} |")
+          PY
+      - name: Upload model and MLflow runs
+        uses: actions/upload-artifact@v7
+        with:
+          name: model-and-mlflow-runs
+          path: |
+            models/
+            mlflow.db
+            mlruns/
+          retention-days: 14
+
+  docker:
+    name: Docker build & smoke test
+    needs: lint-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build image (trains the model inside the build)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: telco-churn-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run container
+        run: docker run -d --name api -p 8000:7860 telco-churn-api:ci
+      - name: Smoke test
+        run: python3 scripts/smoke_test.py http://localhost:8000 120
+      - name: Container logs
+        if: always()
+        run: docker logs api
+
+      # Publish the tested image to GitHub Container Registry (main branch only).
+      - name: Image metadata
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
