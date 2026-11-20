@@ -11,7 +11,7 @@
 
 **данные → эксперименты в MLflow → quality gate → Docker → CI → автодеплой (Hugging Face Spaces / Render) → REST API + демо-UI**
 
-> 🔗 **Демо:** `https://<USER>-telco-churn.hf.space` · **Swagger:** `/docs` *(подставьте свои ссылки после деплоя)*
+> 🔗 **Демо:** `https://github.com/Zxcurilwik/telco-churn-mlops` 
 
 ![Demo UI](docs/images/demo.png)
 
