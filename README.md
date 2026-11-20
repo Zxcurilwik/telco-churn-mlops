@@ -1,7 +1,7 @@
 # Telco Churn Prediction: от эксперимента до продакшена
 
-[![CI](https://github.com/<USER>/<REPO>/actions/workflows/ci.yml/badge.svg)](https://github.com/<USER>/<REPO>/actions/workflows/ci.yml)
-[![Deploy](https://github.com/<USER>/<REPO>/actions/workflows/deploy.yml/badge.svg)](https://github.com/<USER>/<REPO>/actions/workflows/deploy.yml)
+[![CI](https://github.com/Zxcurilwik/telco-churn-mlops/actions/workflows/ci.yml/badge.svg)](https://github.com/Zxcurilwik/telco-churn-mlops/actions/workflows/ci.yml)
+[![Deploy](https://github.com/Zxcurilwik/telco-churn-mlops/actions/workflows/deploy.yml/badge.svg)](https://github.com/<USER>/<REPO>/actions/workflows/deploy.yml)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![MLflow](https://img.shields.io/badge/MLflow-3.18-0194E2)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.165-009688)
